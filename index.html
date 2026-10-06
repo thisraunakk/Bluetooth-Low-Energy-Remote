@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>MegaPi Remote</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Barlow:wght@400;500&display=swap">
+<style>
+  /* Layout: status bar on top, drive pad centred, wheel-test buttons below, settings + log folded at the bottom. */
+  :root {
+    --bg: #eef1f5;
+    --panel: #ffffff;
+    --line: #cfd6df;
+    --fg: #151a21;
+    --muted: #5d6877;
+    --accent: #1a62e8;       /* anodised Makeblock blue */
+    --accent-fg: #ffffff;
+    --stop: #d5322b;
+    --ok: #1c8a4e;
+    --warn: #b87500;
+    --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --font-body: "Barlow", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161c; --panel: #1b212a; --line: #2f3945; --fg: #e8edf3; --muted: #93a0b0;
+      --accent: #4b8bff; --accent-fg: #0a1220; --stop: #ff5a50; --ok: #45c47c; --warn: #e3a334;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: var(--font-body); font-size: 16px; line-height: 1.4;
+    padding-block: max(16px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-bottom));
+    padding-inline: 16px;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  main { max-width: 520px; margin: 0 auto; display: grid; gap: 20px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font: 700 28px/1 var(--font-display); letter-spacing: .04em; text-transform: uppercase; margin: 0; }
+  .status { display: flex; align-items: center; gap: 8px; font: 500 13px var(--font-mono); color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .status[data-s="on"] .dot { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .status[data-s="busy"] .dot { background: var(--warn); }
+
+  button { font: inherit; color: inherit; }
+  .connect {
+    width: 100%; min-height: 52px; border: 0; border-radius: 6px;
+    background: var(--accent); color: var(--accent-fg);
+    font: 700 20px var(--font-display); letter-spacing: .08em; text-transform: uppercase;
+  }
+  .connect[data-s="on"] { background: transparent; color: var(--fg); border: 2px solid var(--line); }
+  .connect:focus-visible, .key:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .notice { margin: 0; padding: 12px 14px; border-left: 4px solid var(--warn); background: var(--panel); font-size: 14px; }
+
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; touch-action: none; }
+  .key {
+    min-height: 92px; border-radius: 8px; border: 2px solid var(--line); background: var(--panel);
+    font: 700 34px var(--font-display); letter-spacing: .04em; text-transform: uppercase;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    touch-action: none; cursor: pointer; transition: transform .05s;
+  }
+  .key small { font: 500 12px var(--font-mono); color: var(--muted); letter-spacing: 0; text-transform: none; }
+  .key.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); transform: scale(.97); }
+  .key.on small { color: inherit; }
+  .key.stop { background: var(--stop); border-color: var(--stop); color: #fff; }
+  .key.stop small { color: #fff; opacity: .85; }
+  .key.stop.on { filter: brightness(.85); }
+  .ghost { visibility: hidden; }
+  .pad .key { aspect-ratio: 1 / 1; min-height: 0; }
+
+  h2 { font: 600 14px var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+  .extras { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; touch-action: none; }
+  .extras .key { min-height: 64px; font-size: 20px; }
+
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  summary { padding: 14px 16px; cursor: pointer; font: 600 16px var(--font-display); letter-spacing: .1em; text-transform: uppercase; }
+  .body { padding: 4px 16px 16px; display: grid; gap: 14px; user-select: text; -webkit-user-select: text; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+  input[type=text], select {
+    width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    font: 500 15px var(--font-mono);
+  }
+  .row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; align-items: end; }
+  .crow { display: grid; grid-template-columns: 1fr 70px; gap: 8px; align-items: end; padding-top: 10px; border-top: 1px solid var(--line); }
+  .crow .opts { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--fg); }
+  .check input { width: 20px; height: 20px; }
+  .small-btn { min-height: 40px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); }
+  .hint { font-size: 13px; color: var(--muted); margin: 0; }
+  pre { margin: 0; padding: 12px; max-height: 220px; overflow: auto; background: var(--bg); border-radius: 6px; font: 400 12px/1.5 var(--font-mono); white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
+  @media (prefers-reduced-motion: reduce) { .key { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>MegaPi Remote</h1>
+    <div class="status" id="status" data-s="off"><span class="dot"></span><span id="statusText">Not connected</span></div>
+  </header>
+
+  <p class="notice" id="unsupported" hidden>
+    This browser can't use Bluetooth. On iPhone, open this page in the free <strong>Bluefy</strong> browser. Safari and Chrome on iOS don't support it.
+  </p>
+
+  <button class="connect" id="connectBtn" type="button">Connect to car</button>
+
+  <section aria-label="Drive pad">
+    <div class="pad" id="pad"></div>
+  </section>
+
+  <section aria-label="Extra buttons">
+    <h2>Extra buttons</h2>
+    <div class="extras" id="extras"></div>
+  </section>
+
+  <details id="settings">
+    <summary>Customise</summary>
+    <div class="body">
+      <label>Behaviour
+        <select id="mode">
+          <option value="hold">Hold to drive (releasing sends stop)</option>
+          <option value="latch">Tap to start, press STOP to end</option>
+        </select>
+      </label>
+      <div id="padEditor" style="display:grid;gap:10px"></div>
+      <div>
+        <h2>Extra buttons</h2>
+        <div id="customEditor" style="display:grid;gap:10px"></div>
+        <p style="margin:12px 0 0"><button class="small-btn" id="addBtn" type="button">+ Add button</button></p>
+      </div>
+      <label>Bluetooth service UUID (optional)
+        <input type="text" id="uuid" placeholder="e.g. ffe0" autocapitalize="off" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="hint">Leave the UUID empty. Use it only if the car connects but never moves. The app finds a writable channel by itself and lists what it found in the log.</p>
+      <p style="margin:0"><button class="small-btn" id="resetBtn" type="button">Reset to defaults</button></p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Log</summary>
+    <div class="body"><pre id="log">Nothing yet.</pre></div>
+  </details>
+</main>
+
+<script>
+(function () {
+  var KEY = 'megapi-remote-v1';
+  var DEFAULTS = {
+    mode: 'hold',
+    uuid: '',
+    pad: {
+      up:    { cmd: 'F', label: 'Fwd' },
+      left:  { cmd: 'L', label: 'Left' },
+      stop:  { cmd: 'S', label: 'Stop' },
+      right: { cmd: 'R', label: 'Right' },
+      down:  { cmd: 'B', label: 'Back' }
+    },
+    custom: [
+      { label: 'Right wheel fwd', cmd: 'a', once: false },
+      { label: 'Left wheel fwd',  cmd: 'b', once: false },
+      { label: 'Right wheel rev', cmd: 'c', once: false },
+      { label: 'Left wheel rev',  cmd: 'd', once: false }
+    ]
+  };
+
+  var cfg = load();
+  var device = null, ch = null, chain = Promise.resolve();
+  var logLines = [];
+  var $ = function (id) { return document.getElementById(id); };
+
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function load() {
+    var c = clone(DEFAULTS);
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY));
+      if (s) {
+        c.mode = s.mode === 'latch' ? 'latch' : 'hold';
+        c.uuid = typeof s.uuid === 'string' ? s.uuid : '';
+        if (s.pad) Object.keys(c.pad).forEach(function (k) { if (s.pad[k] && typeof s.pad[k].cmd === 'string') c.pad[k].cmd = s.pad[k].cmd; });
+        if (Array.isArray(s.custom)) c.custom = s.custom.filter(function (x) { return x && typeof x.cmd === 'string'; });
+      }
+    } catch (e) {}
+    return c;
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
+
+  function log(msg) {
+    var t = new Date().toLocaleTimeString([], { hour12: false });
+    logLines.push(t + '  ' + msg);
+    if (logLines.length > 60) logLines.shift();
+    $('log').textContent = logLines.join('\n');
+  }
+
+  function setStatus(state, text) {
+    $('status').dataset.s = state;
+    $('statusText').textContent = text;
+    var b = $('connectBtn');
+    b.dataset.s = state;
+    b.textContent = state === 'on' ? 'Disconnect' : (state === 'busy' ? 'Connecting...' : 'Connect to car');
+  }
+
+  /* ---------- Bluetooth ---------- */
+  function parseUuid(u) {
+    u = (u || '').trim().toLowerCase();
+    if (!u) return null;
+    if (/^(0x)?[0-9a-f]{4}$/.test(u)) return parseInt(u.replace('0x', ''), 16);
+    return u;
+  }
+
+  function optionalServices() {
+    var list = [0xffe0, 0xfff0, 0xffe5, 0xfee0, '6e400001-b5a5-f393-e0a9-e50e24dcca9e', '49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+    var custom = parseUuid(cfg.uuid);
+    if (custom) list.unshift(custom);
+    return list;
+  }
+
+  async function connect() {
+    if (!navigator.bluetooth) { $('unsupported').hidden = false; return; }
+    try {
+      setStatus('busy', 'Choose your car...');
+      device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: optionalServices() });
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+      log('Selected ' + (device.name || 'unnamed device'));
+      setStatus('busy', 'Connecting...');
+      var server = await device.gatt.connect();
+      var services = await server.getPrimaryServices();
+      var best = null;
+      for (var i = 0; i < services.length; i++) {
+        var chars = await services[i].getCharacteristics();
+        for (var j = 0; j < chars.length; j++) {
+          var p = chars[j].properties;
+          log('Found ' + services[i].uuid.slice(4, 8) + ' / ' + chars[j].uuid.slice(4, 8) +
+              (p.writeWithoutResponse ? ' write-no-resp' : '') + (p.write ? ' write' : '') + (p.notify ? ' notify' : ''));
+          if ((p.write || p.writeWithoutResponse) && (!best || chars[j].uuid.indexOf('ffe1') === 4)) best = chars[j];
+        }
+      }
+      if (!best) throw new Error('No writable channel found on this device');
+      ch = best;
+      setStatus('on', 'Connected: ' + (device.name || 'car'));
+      log('Using channel ' + ch.uuid.slice(4, 8));
+    } catch (e) {
+      log('Connect failed: ' + (e && e.message ? e.message : e));
+      ch = null;
+      setStatus('off', 'Not connected');
+    }
+  }
+
+  function disconnect() {
+    sendNow(cfg.pad.stop.cmd);
+    setTimeout(function () { if (device && device.gatt.connected) device.gatt.disconnect(); }, 150);
+  }
+
+  function onDisconnected() {
+    ch = null;
+    setStatus('off', 'Not connected');
+    log('Disconnected');
+  }
+
+  var enc = new TextEncoder();
+  function write(cmd) {
+    if (!ch) return Promise.resolve();
+    var data = enc.encode(cmd);
+    var p = ch.properties;
+    if (p.writeWithoutResponse && ch.writeValueWithoutResponse) return ch.writeValueWithoutResponse(data);
+    return ch.writeValue(data);
+  }
+  function sendNow(cmd) {
+    if (!cmd) return;
+    log('send ' + cmd);
+    chain = chain.then(function () { return write(cmd); }).catch(function (e) { log('Write failed: ' + (e && e.message ? e.message : e)); });
+  }
+
+  /* ---------- Controls ---------- */
+  function bindKey(el, getCmd, opts) {
+    var held = false;
+    function down(e) {
+      e.preventDefault();
+      if (held) return;
+      held = true;
+      try { el.setPointerCapture(e.pointerId); } catch (x) {}
+      el.classList.add('on');
+      sendNow(getCmd());
+    }
+    function up() {
+      if (!held) return;
+      held = false;
+      el.classList.remove('on');
+      if (cfg.mode === 'hold' && !opts.isStop && !opts.once) sendNow(cfg.pad.stop.cmd);
+    }
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('lostpointercapture', up);
+    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    el.addEventListener('keydown', function (e) { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); down(e); } });
+    el.addEventListener('keyup', function (e) { if (e.key === ' ' || e.key === 'Enter') up(); });
+  }
+
+  function makeKey(text, sub, cls) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'key' + (cls ? ' ' + cls : '');
+    var s = document.createElement('span'); s.textContent = text;
+    var m = document.createElement('small'); m.textContent = sub;
+    b.appendChild(s); b.appendChild(m);
+    return b;
+  }
+
+  function renderControls() {
+    var pad = $('pad'); pad.textContent = '';
+    function ghost() { var g = document.createElement('div'); g.className = 'key ghost'; pad.appendChild(g); }
+    function dir(k) {
+      var d = cfg.pad[k];
+      var b = makeKey(d.label, 'sends ' + d.cmd, k === 'stop' ? 'stop' : '');
+      bindKey(b, function () { return cfg.pad[k].cmd; }, { isStop: k === 'stop' });
+      pad.appendChild(b);
+    }
+    ghost(); dir('up'); ghost();
+    dir('left'); dir('stop'); dir('right');
+    ghost(); dir('down'); ghost();
+
+    var ex = $('extras'); ex.textContent = '';
+    cfg.custom.forEach(function (c, i) {
+      var b = makeKey(c.label || ('Button ' + (i + 1)), 'sends ' + c.cmd, '');
+      bindKey(b, function () { return cfg.custom[i].cmd; }, { once: !!c.once });
+      ex.appendChild(b);
+    });
+    ex.parentElement.hidden = cfg.custom.length === 0;
+  }
+
+  function field(labelText, value, onInput, extra) {
+    var l = document.createElement('label');
+    l.appendChild(document.createTextNode(labelText));
+    var i = document.createElement('input');
+    i.type = 'text'; i.value = value; i.autocomplete = 'off'; i.autocapitalize = 'off'; i.spellcheck = false;
+    if (extra && extra.maxLength) i.maxLength = extra.maxLength;
+    i.addEventListener('input', function () { onInput(i.value); save(); renderControls(); });
+    l.appendChild(i);
+    return l;
+  }
+
+  function renderEditor() {
+    var pe = $('padEditor'); pe.textContent = '';
+    var names = { up: 'Forward', down: 'Backward', left: 'Turn left', right: 'Turn right', stop: 'Stop' };
+    ['up', 'down', 'left', 'right', 'stop'].forEach(function (k) {
+      pe.appendChild(field(names[k] + ' sends', cfg.pad[k].cmd, function (v) { cfg.pad[k].cmd = v; }, { maxLength: 16 }));
+    });
+
+    var ce = $('customEditor'); ce.textContent = '';
+    cfg.custom.forEach(function (c, i) {
+      var wrap = document.createElement('div'); wrap.className = 'crow';
+      wrap.appendChild(field('Label', c.label, function (v) { cfg.custom[i].label = v; }, { maxLength: 24 }));
+      wrap.appendChild(field('Sends', c.cmd, function (v) { cfg.custom[i].cmd = v; }, { maxLength: 16 }));
+      var opts = document.createElement('div'); opts.className = 'opts';
+      var cl = document.createElement('label'); cl.className = 'check';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!c.once;
+      cb.addEventListener('change', function () { cfg.custom[i].once = cb.checked; save(); renderControls(); });
+      cl.appendChild(cb); cl.appendChild(document.createTextNode('Tap only (no stop on release)'));
+      var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'small-btn'; rm.textContent = 'Remove';
+      rm.addEventListener('click', function () { cfg.custom.splice(i, 1); save(); renderControls(); renderEditor(); });
+      opts.appendChild(cl); opts.appendChild(rm);
+      wrap.appendChild(opts);
+      ce.appendChild(wrap);
+    });
+    $('mode').value = cfg.mode;
+    $('uuid').value = cfg.uuid;
+  }
+
+  /* ---------- Wiring ---------- */
+  $('connectBtn').addEventListener('click', function () {
+    if (device && device.gatt && device.gatt.connected) disconnect(); else connect();
+  });
+  $('mode').addEventListener('change', function (e) { cfg.mode = e.target.value; save(); });
+  $('uuid').addEventListener('input', function (e) { cfg.uuid = e.target.value; save(); });
+  $('addBtn').addEventListener('click', function () {
+    cfg.custom.push({ label: 'New button', cmd: 'S', once: true });
+    save(); renderControls(); renderEditor();
+  });
+  $('resetBtn').addEventListener('click', function () { cfg = clone(DEFAULTS); save(); renderControls(); renderEditor(); });
+
+  // Safety: stop the car if the page goes to the background.
+  document.addEventListener('visibilitychange', function () { if (document.hidden && ch) sendNow(cfg.pad.stop.cmd); });
+  window.addEventListener('pagehide', function () { if (ch) sendNow(cfg.pad.stop.cmd); });
+
+  if (!navigator.bluetooth) $('unsupported').hidden = false;
+  renderControls();
+  renderEditor();
+})();
+</script>
+</body>
+</html>
