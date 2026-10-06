@@ -188,6 +188,7 @@
       if (s) {
         c.mode = s.mode === 'latch' ? 'latch' : 'hold';
         c.uuid = typeof s.uuid === 'string' ? s.uuid : '';
+        c.channel = typeof s.channel === 'string' ? s.channel : '';
         if (s.pad) Object.keys(c.pad).forEach(function (k) { if (s.pad[k] && typeof s.pad[k].cmd === 'string') c.pad[k].cmd = s.pad[k].cmd; });
         if (Array.isArray(s.custom)) c.custom = s.custom.filter(function (x) { return x && typeof x.cmd === 'string'; });
       }
@@ -273,8 +274,18 @@
           }
         }
       }
+      // Prefer the channel the user picked last time, then Makeblock's ffe1 / ffe3, then the first writable one.
+      var pick = 0, found = -1;
+      writables.forEach(function (w, idx) {
+        if (found < 0 && cfg.channel && w.label.indexOf(cfg.channel) === 0) found = idx;
+      });
+      if (found < 0) writables.forEach(function (w, idx) {
+        if (found < 0 && w.label.indexOf('ffe1 / ffe3') === 0) found = idx;
+      });
+      if (found >= 0) pick = found;
       fillChannels();
-      best = writables.length ? writables[0].ch : null;
+      if (writables.length) $('channel').value = String(pick);
+      best = writables.length ? writables[pick].ch : null;
       if (!best) throw new Error('Connected, but no writable Bluetooth channel was found. Open the Log and send it to Claude.');
       ch = best;
       $('unsupported').hidden = !!navigator.bluetooth;
@@ -436,7 +447,7 @@
   });
   $('channel').addEventListener('change', function (e) {
     var w = writables[parseInt(e.target.value, 10)];
-    if (w) { ch = w.ch; log('Switched to channel ' + w.label); setLast('Channel changed. Press a button to test.'); }
+    if (w) { ch = w.ch; cfg.channel = w.label.slice(0, 11); save(); log('Switched to channel ' + w.label); setLast('Channel changed. Press a button to test.'); }
   });
   $('mode').addEventListener('change', function (e) { cfg.mode = e.target.value; save(); });
   $('uuid').addEventListener('input', function (e) { cfg.uuid = e.target.value; save(); });
