@@ -214,10 +214,21 @@
   }
 
   function optionalServices() {
-    var list = [0xffe0, 0xfff0, 0xffe5, 0xfee0, '6e400001-b5a5-f393-e0a9-e50e24dcca9e', '49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+    // Serial-over-BLE modules use many services in the FFE0-FFEF / FFF0-FFFF range, so ask for all of them.
+    var list = [];
+    var n;
+    for (n = 0xffe0; n <= 0xffef; n++) list.push(n);
+    for (n = 0xfff0; n <= 0xfffa; n++) list.push(n);
+    list.push(0xfee0, '6e400001-b5a5-f393-e0a9-e50e24dcca9e', '49535343-fe7d-4ae5-8fa9-9fafd205e455');
     var custom = parseUuid(cfg.uuid);
     if (custom) list.unshift(custom);
     return list;
+  }
+
+  function showError(msg) {
+    var n = $('unsupported');
+    n.textContent = msg;
+    n.hidden = false;
   }
 
   async function connect() {
@@ -229,7 +240,19 @@
       log('Selected ' + (device.name || 'unnamed device'));
       setStatus('busy', 'Connecting...');
       var server = await device.gatt.connect();
-      var services = await server.getPrimaryServices();
+      var services = [];
+      try {
+        services = await server.getPrimaryServices();
+      } catch (e1) {
+        log('getPrimaryServices failed (' + (e1 && e1.message ? e1.message : e1) + '), trying one by one');
+      }
+      if (!services.length) {
+        var cands = optionalServices();
+        for (var k = 0; k < cands.length; k++) {
+          try { services.push(await server.getPrimaryService(cands[k])); } catch (e2) {}
+        }
+      }
+      log('Services found: ' + services.length);
       var best = null;
       for (var i = 0; i < services.length; i++) {
         var chars = await services[i].getCharacteristics();
@@ -240,13 +263,17 @@
           if ((p.write || p.writeWithoutResponse) && (!best || chars[j].uuid.indexOf('ffe1') === 4)) best = chars[j];
         }
       }
-      if (!best) throw new Error('No writable channel found on this device');
+      if (!best) throw new Error('Connected, but no writable Bluetooth channel was found. Open the Log and send it to Claude.');
       ch = best;
+      $('unsupported').hidden = !!navigator.bluetooth;
       setStatus('on', 'Connected: ' + (device.name || 'car'));
       log('Using channel ' + ch.uuid.slice(4, 8));
     } catch (e) {
-      log('Connect failed: ' + (e && e.message ? e.message : e));
+      var msg = e && e.message ? e.message : String(e);
+      log('Connect failed: ' + msg);
+      showError('Connection problem: ' + msg);
       ch = null;
+      try { if (device && device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch (e3) {}
       setStatus('off', 'Not connected');
     }
   }
