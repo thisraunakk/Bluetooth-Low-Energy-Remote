@@ -114,6 +114,8 @@
     <div class="pad" id="pad"></div>
   </section>
 
+  <p class="hint" id="last" aria-live="polite">No command sent yet.</p>
+
   <section aria-label="Extra buttons">
     <h2>Extra buttons</h2>
     <div class="extras" id="extras"></div>
@@ -134,6 +136,10 @@
         <div id="customEditor" style="display:grid;gap:10px"></div>
         <p style="margin:12px 0 0"><button class="small-btn" id="addBtn" type="button">+ Add button</button></p>
       </div>
+      <label>Send commands on channel
+        <select id="channel"><option>Connect first</option></select>
+      </label>
+      <p class="hint">If the car doesn't react, connect, pick a different channel here, and press a button again. Each entry is service / characteristic.</p>
       <label>Bluetooth service UUID (optional)
         <input type="text" id="uuid" placeholder="e.g. ffe0" autocapitalize="off" autocomplete="off" spellcheck="false">
       </label>
@@ -170,7 +176,7 @@
   };
 
   var cfg = load();
-  var device = null, ch = null, chain = Promise.resolve();
+  var device = null, ch = null, chain = Promise.resolve(), writables = [];
   var logLines = [];
   var $ = function (id) { return document.getElementById(id); };
 
@@ -254,15 +260,21 @@
       }
       log('Services found: ' + services.length);
       var best = null;
+      writables = [];
       for (var i = 0; i < services.length; i++) {
-        var chars = await services[i].getCharacteristics();
+        var chars = [];
+        try { chars = await services[i].getCharacteristics(); } catch (e4) { log('Could not read ' + services[i].uuid + ': ' + (e4 && e4.message ? e4.message : e4)); }
         for (var j = 0; j < chars.length; j++) {
           var p = chars[j].properties;
           log('Found ' + services[i].uuid.slice(4, 8) + ' / ' + chars[j].uuid.slice(4, 8) +
               (p.writeWithoutResponse ? ' write-no-resp' : '') + (p.write ? ' write' : '') + (p.notify ? ' notify' : ''));
-          if ((p.write || p.writeWithoutResponse) && (!best || chars[j].uuid.indexOf('ffe1') === 4)) best = chars[j];
+          if (p.write || p.writeWithoutResponse) {
+            writables.push({ ch: chars[j], label: services[i].uuid.slice(4, 8) + ' / ' + chars[j].uuid.slice(4, 8) + (p.writeWithoutResponse ? ' (no response)' : ' (write)') });
+          }
         }
       }
+      fillChannels();
+      best = writables.length ? writables[0].ch : null;
       if (!best) throw new Error('Connected, but no writable Bluetooth channel was found. Open the Log and send it to Claude.');
       ch = best;
       $('unsupported').hidden = !!navigator.bluetooth;
@@ -297,10 +309,29 @@
     if (p.writeWithoutResponse && ch.writeValueWithoutResponse) return ch.writeValueWithoutResponse(data);
     return ch.writeValue(data);
   }
+  function setLast(t) { $('last').textContent = t; }
+  function fillChannels() {
+    var sel = $('channel');
+    sel.textContent = '';
+    writables.forEach(function (w, i) {
+      var o = document.createElement('option');
+      o.value = String(i); o.textContent = w.label;
+      sel.appendChild(o);
+    });
+    if (!writables.length) { var o2 = document.createElement('option'); o2.textContent = 'Connect first'; sel.appendChild(o2); }
+  }
   function sendNow(cmd) {
     if (!cmd) return;
+    if (!ch) { setLast('Not connected. Tap Connect to car first.'); return; }
     log('send ' + cmd);
-    chain = chain.then(function () { return write(cmd); }).catch(function (e) { log('Write failed: ' + (e && e.message ? e.message : e)); });
+    chain = chain
+      .then(function () { return write(cmd); })
+      .then(function () { setLast('Sent "' + cmd + '" to the module'); })
+      .catch(function (e) {
+        var m = e && e.message ? e.message : String(e);
+        log('Write failed: ' + m);
+        setLast('Send failed: ' + m);
+      });
   }
 
   /* ---------- Controls ---------- */
@@ -402,6 +433,10 @@
   /* ---------- Wiring ---------- */
   $('connectBtn').addEventListener('click', function () {
     if (device && device.gatt && device.gatt.connected) disconnect(); else connect();
+  });
+  $('channel').addEventListener('change', function (e) {
+    var w = writables[parseInt(e.target.value, 10)];
+    if (w) { ch = w.ch; log('Switched to channel ' + w.label); setLast('Channel changed. Press a button to test.'); }
   });
   $('mode').addEventListener('change', function (e) { cfg.mode = e.target.value; save(); });
   $('uuid').addEventListener('input', function (e) { cfg.uuid = e.target.value; save(); });
