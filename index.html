@@ -115,6 +115,7 @@
   </section>
 
   <p class="hint" id="last" aria-live="polite">No command sent yet.</p>
+  <p class="hint">Keyboard: <strong>W</strong> forward, <strong>A</strong> left, <strong>S</strong> back, <strong>D</strong> right, <strong>Space</strong> stop.</p>
 
   <section aria-label="Extra buttons">
     <h2>Extra buttons</h2>
@@ -178,6 +179,7 @@
   var cfg = load();
   var device = null, ch = null, chain = Promise.resolve(), writables = [];
   var logLines = [];
+  var padEls = {};
   var $ = function (id) { return document.getElementById(id); };
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -383,11 +385,14 @@
 
   function renderControls() {
     var pad = $('pad'); pad.textContent = '';
+    padEls = {};
+    var hints = { up: 'W', left: 'A', down: 'S', right: 'D', stop: 'Space' };
     function ghost() { var g = document.createElement('div'); g.className = 'key ghost'; pad.appendChild(g); }
     function dir(k) {
       var d = cfg.pad[k];
-      var b = makeKey(d.label, 'sends ' + d.cmd, k === 'stop' ? 'stop' : '');
+      var b = makeKey(d.label, hints[k] + ' · sends ' + d.cmd, k === 'stop' ? 'stop' : '');
       bindKey(b, function () { return cfg.pad[k].cmd; }, { isStop: k === 'stop' });
+      padEls[k] = b;
       pad.appendChild(b);
     }
     ghost(); dir('up'); ghost();
@@ -441,9 +446,62 @@
     $('uuid').value = cfg.uuid;
   }
 
+  /* ---------- Keyboard: W A S D drive, Space stops ---------- */
+  var KEYMAP = { w: 'up', a: 'left', s: 'down', d: 'right', ' ': 'stop' };
+  var heldDirs = [];   // drive directions currently held, in press order
+
+  function typing(t) {
+    return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
+  }
+  function lit(dir, on) { if (padEls[dir]) padEls[dir].classList.toggle('on', on); }
+
+  function releaseAll() {
+    Object.keys(padEls).forEach(function (k) { lit(k, false); });
+    if (heldDirs.length) {
+      heldDirs = [];
+      sendNow(cfg.pad.stop.cmd);
+    }
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var dir = KEYMAP[e.key.toLowerCase()];
+    if (!dir || typing(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();           // keep Space from also activating a focused button
+    if (e.repeat) return;
+    if (dir === 'stop') {
+      heldDirs.forEach(function (k) { lit(k, false); });
+      heldDirs = [];
+      lit('stop', true);
+      sendNow(cfg.pad.stop.cmd);
+      return;
+    }
+    if (heldDirs.indexOf(dir) < 0) heldDirs.push(dir);
+    lit(dir, true);
+    sendNow(cfg.pad[dir].cmd);
+  }, true);
+
+  window.addEventListener('keyup', function (e) {
+    var dir = KEYMAP[e.key.toLowerCase()];
+    if (!dir || typing(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    lit(dir, false);
+    if (dir === 'stop') return;
+    var i = heldDirs.indexOf(dir);
+    if (i >= 0) heldDirs.splice(i, 1);
+    if (cfg.mode !== 'hold') return;
+    if (heldDirs.length) sendNow(cfg.pad[heldDirs[heldDirs.length - 1]].cmd);  // another key still down: carry on with it
+    else sendNow(cfg.pad.stop.cmd);
+  }, true);
+
+  window.addEventListener('blur', releaseAll);
+
   /* ---------- Wiring ---------- */
-  $('connectBtn').addEventListener('click', function () {
+  $('connectBtn').addEventListener('click', function (e) {
     if (device && device.gatt && device.gatt.connected) disconnect(); else connect();
+    e.currentTarget.blur();   // so Space never re-triggers Connect/Disconnect
   });
   $('channel').addEventListener('change', function (e) {
     var w = writables[parseInt(e.target.value, 10)];
